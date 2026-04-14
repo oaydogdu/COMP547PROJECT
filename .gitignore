@@ -1,0 +1,6 @@
+.pycache/
+__pycache__/
+*.pyc
+.cursor/plans/
+results/
+data/

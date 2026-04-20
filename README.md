@@ -48,3 +48,19 @@ Use Cursor as your IDE and Lightning AI as the GPU execution environment.
 Notes:
 - The Makefile sets `PYTHONPATH=src` so `arpg` imports work consistently.
 - Keep all run outputs under `results/` and commit only code/config/docs (not large checkpoints).
+
+## PixelCNN++ Baseline (Public Source Integration)
+
+We integrated a modernized PixelCNN++ baseline derived from public source code so we can run stronger classical autoregressive image generation before ARPG-style parallel decoding experiments.
+
+Train:
+- `make pcnnpp-train-fashion`
+- `make pcnnpp-train-cifar`
+
+Evaluate and save sample grid + speed metrics:
+- `make pcnnpp-eval-fashion`
+- `make pcnnpp-eval-cifar`
+
+Direct scripts:
+- `scripts/train_pixelcnnpp.py`
+- `scripts/eval_pixelcnnpp.py`

@@ -13,8 +13,8 @@ from torch.utils.data import DataLoader
 from torchvision import datasets, transforms, utils
 from tqdm import tqdm
 
-from arpg.pixelcnnpp_model import PixelCNNPP
-from arpg.pixelcnnpp_utils import (
+from KlassikAR.pixelcnnpp_model import PixelCNNPP
+from KlassikAR.pixelcnnpp_utils import (
     discretized_mix_logistic_loss,
     discretized_mix_logistic_loss_1d,
     sample_from_discretized_mix_logistic,

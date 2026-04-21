@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.nn.utils import weight_norm as wn
 
-from arpg.pixelcnnpp_utils import concat_elu, down_shift, right_shift
+from KlassikAR.pixelcnnpp_utils import concat_elu, down_shift, right_shift
 
 
 class NIN(nn.Module):

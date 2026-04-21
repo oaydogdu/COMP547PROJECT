@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from arpg.pixelcnnpp_runner import PixelCNNPPTrainArgs, train_pixelcnnpp
+from KlassikAR.pixelcnnpp_runner import PixelCNNPPTrainArgs, train_pixelcnnpp
 
 
 def parse_args() -> argparse.Namespace:

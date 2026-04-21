@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from arpg.pixelcnnpp_runner import evaluate_pixelcnnpp_checkpoint
+from KlassikAR.pixelcnnpp_runner import evaluate_pixelcnnpp_checkpoint
 
 
 def parse_args() -> argparse.Namespace:

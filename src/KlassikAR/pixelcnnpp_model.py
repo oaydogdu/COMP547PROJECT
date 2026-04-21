@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from arpg.pixelcnnpp_layers import (
+from KlassikAR.pixelcnnpp_layers import (
     DownRightShiftedConv2d,
     DownRightShiftedDeconv2d,
     DownShiftedConv2d,

@@ -1,30 +1,27 @@
 # COMP547 Project: ARPG Speed-Quality Tradeoff
 
-This repository implements a small-scale study of randomized parallel decoding
-for autoregressive image generation.
+This repository contains the baseline stage for our COMP547 project:
+a modernized PixelCNN++ autoregressive image generation pipeline.
 
 ## What We Are Building
 
-- A reproducible baseline autoregressive training/sampling pipeline.
-- A randomized parallel decoding sampler with configurable schedules.
-- A cost-aware experiment runner for Fashion-MNIST and CIFAR-10.
-- Evaluation outputs for quality (`FID`) and efficiency (`latency`, `throughput`).
+- A reproducible PixelCNN++ baseline training/sampling pipeline.
+- Fashion-MNIST and CIFAR-10 support.
+- Evaluation outputs for efficiency (`latency`, `throughput`) and sample grids.
 
 ## Quick Structure
 
 - `docs/` project scope, experiment protocol, reporting templates.
-- `configs/` dataset/model/experiment configurations.
-- `src/arpg/` core code (data, model, train, decode, evaluate).
-- `scripts/` simple commands for setup, training, experiments, and plotting.
+- `configs/` experiment configuration artifacts.
+- `src/KlassikAR/` PixelCNN++ model, layers, loss/sampling utilities, train/eval runner.
+- `scripts/` train/eval entrypoints for PixelCNN++.
 - `results/` metrics, plots, and generated sample grids.
 
-## Execution Roadmap
+## Baseline Roadmap
 
-1. Freeze scope and minimum experiment matrix (`docs/scope_freeze.md`).
-2. Train baseline and validate sequential decoding.
-3. Integrate randomized parallel decoding and correctness checks.
-4. Run pilot + main ablations under cost constraints.
-5. Produce speed-quality tradeoff figures and final report assets.
+1. Train PixelCNN++ baseline on Fashion-MNIST and CIFAR-10.
+2. Validate checkpoints with sampling outputs and speed metrics.
+3. Use validated baseline as the foundation for next-stage ARPG-style decoding work.
 
 ## Cursor + Lightning AI Workflow
 
@@ -41,9 +38,8 @@ Use Cursor as your IDE and Lightning AI as the GPU execution environment.
 3. Install dependencies in Lightning:
    - `python -m pip install -r requirements.txt`
 4. Run training/eval in Lightning:
-   - `make train-fashion`
-   - `make eval-fashion`
-   - `make matrix-fashion`
+   - `make pcnnpp-train-fashion`
+   - `make pcnnpp-eval-fashion`
 
 Notes:
 - The Makefile sets `PYTHONPATH=src` so `arpg` imports work consistently.

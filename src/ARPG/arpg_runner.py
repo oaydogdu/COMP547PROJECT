@@ -38,8 +38,8 @@ class ARPGTrainArgs:
     dataset: str = "fashion_mnist"
     data_dir: str = "data"
     save_dir: str = "results/arpg"
-    batch_size: int = 512
-    epochs: int = 40
+    batch_size: int = 256
+    epochs: int = 20
     lr: float = 3e-4
     d_model: int = 192
     n_heads: int = 6
@@ -194,6 +194,26 @@ def train_arpg(args: ARPGTrainArgs) -> str:
 Schedule = Literal["random", "raster", "row", "column"]
 
 
+def _arccos_sizes(N: int, n_steps: int) -> list:
+    """Arccos mask schedule (ARPG paper).
+
+    Reveals more tokens early (coarse structure) and fewer later (refinement).
+    mask_ratio at step t: cos(t / n_steps * pi/2)
+    """
+    import math
+    ratios = [math.cos(t / n_steps * math.pi / 2) for t in range(n_steps + 1)]
+    sizes = []
+    prev_count = N
+    for t in range(n_steps):
+        curr_count = round(N * ratios[t + 1])
+        sizes.append(max(1, prev_count - curr_count))
+        prev_count = curr_count
+    # Fix rounding drift so total == N
+    diff = N - sum(sizes)
+    sizes[0] += diff
+    return sizes
+
+
 def _decode_order(H: int, W: int, schedule: Schedule, seed: int = 42) -> torch.Tensor:
     """Return a permutation of pixel indices 0..H*W-1 for the given schedule."""
     N = H * W
@@ -238,8 +258,7 @@ def arpg_decode(
     """
     H, W, N = model.H, model.W, model.N
     order = _decode_order(H, W, schedule, seed=seed).to(device)
-    base, rem = divmod(N, n_steps)
-    sizes = [base + (1 if i < rem else 0) for i in range(n_steps)]
+    sizes = _arccos_sizes(N, n_steps)   # arccos schedule (ARPG paper)
 
     tokens = torch.full((n_samples, N), MASK_ID, dtype=torch.long, device=device)
 

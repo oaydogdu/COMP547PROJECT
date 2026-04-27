@@ -38,7 +38,7 @@ class ARPGTrainArgs:
     dataset: str = "fashion_mnist"
     data_dir: str = "data"
     save_dir: str = "results/arpg"
-    batch_size: int = 256
+    batch_size: int = 512
     epochs: int = 20
     lr: float = 3e-4
     d_model: int = 192
@@ -197,20 +197,24 @@ Schedule = Literal["random", "raster", "row", "column"]
 def _arccos_sizes(N: int, n_steps: int) -> list:
     """Arccos mask schedule (ARPG paper).
 
-    Reveals more tokens early (coarse structure) and fewer later (refinement).
-    mask_ratio at step t: cos(t / n_steps * pi/2)
+    Computes how many tokens to reveal at each step using the arccos curve.
+    Uses cumulative counts to avoid rounding drift for large K values.
     """
     import math
-    ratios = [math.cos(t / n_steps * math.pi / 2) for t in range(n_steps + 1)]
-    sizes = []
-    prev_count = N
-    for t in range(n_steps):
-        curr_count = round(N * ratios[t + 1])
-        sizes.append(max(1, prev_count - curr_count))
-        prev_count = curr_count
-    # Fix rounding drift so total == N
-    diff = N - sum(sizes)
-    sizes[0] += diff
+    # Token counts remaining masked at each step boundary (monotone decreasing)
+    counts = [round(N * math.cos(t / n_steps * math.pi / 2))
+              for t in range(n_steps + 1)]
+    counts[0]  = N   # guarantee start fully masked
+    counts[-1] = 0   # guarantee end fully revealed
+    # Sizes = drop in masked count at each step (may be 0 for large K)
+    sizes = [max(0, counts[t] - counts[t + 1]) for t in range(n_steps)]
+    # Distribute any remaining tokens (due to rounding) to the last non-zero step
+    remainder = N - sum(sizes)
+    if remainder != 0:
+        for i in range(len(sizes) - 1, -1, -1):
+            if sizes[i] > 0:
+                sizes[i] += remainder
+                break
     return sizes
 
 
@@ -268,6 +272,8 @@ def arpg_decode(
 
     cursor = 0
     for step_size in sizes:
+        if step_size == 0:          # arccos rounding: skip empty steps
+            continue
         logits  = model(tokens)                            # (B, N, C)
         sampled = torch.multinomial(
             logits.softmax(-1).view(-1, model.n_levels), 1

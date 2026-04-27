@@ -38,14 +38,14 @@ class ARPGTrainArgs:
     dataset: str = "fashion_mnist"
     data_dir: str = "data"
     save_dir: str = "results/arpg"
-    batch_size: int = 256
-    epochs: int = 20
+    batch_size: int = 512
+    epochs: int = 40
     lr: float = 3e-4
-    d_model: int = 128
-    n_heads: int = 4
+    d_model: int = 192
+    n_heads: int = 6
     n_layers: int = 6
     n_levels: int = 256
-    dropout: float = 0.1
+    dropout: float = 0.05
     seed: int = 1
 
 
@@ -117,6 +117,8 @@ def train_arpg(args: ARPGTrainArgs) -> str:
 
     optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-5)
+    scaler    = torch.cuda.amp.GradScaler(enabled=(device.type == "cuda"))
+    use_amp   = device.type == "cuda"
 
     save_dir = Path(args.save_dir)
     ckpt_dir = save_dir / "checkpoints"
@@ -133,17 +135,20 @@ def train_arpg(args: ARPGTrainArgs) -> str:
         acc, n = 0.0, 0
         bar = tqdm(train_loader, desc=f"train {epoch+1}/{args.epochs}")
         for x, _ in bar:
-            x      = x.to(device)
+            x      = x.to(device, non_blocking=True)
             tokens = _to_tokens(x, args.n_levels)
-            # Vary mask rate in [0.1, 0.9] so model learns any conditioning
-            rate   = 0.1 + 0.8 * torch.rand(1).item()
+            # Full [0, 1] range so model learns fully-masked → fully-revealed
+            rate   = torch.rand(1).item()
             masked, bmask = _random_mask(tokens, rate)
-            logits = model(masked)
-            loss   = F.cross_entropy(logits[bmask], tokens[bmask])
             optimizer.zero_grad(set_to_none=True)
-            loss.backward()
+            with torch.cuda.amp.autocast(enabled=use_amp):
+                logits = model(masked)
+                loss   = F.cross_entropy(logits[bmask], tokens[bmask])
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
+            scaler.step(optimizer)
+            scaler.update()
             bpd = loss.item() / math.log(2.0)
             acc += bpd * x.size(0); n += x.size(0)
             bar.set_postfix(bpd=f"{bpd:.4f}")

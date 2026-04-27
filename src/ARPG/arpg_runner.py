@@ -26,7 +26,7 @@ from torchvision import utils as tvutils
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from KlassikAR.arpg_model import MASK_ID, PixelARPG
+from ARPG.arpg_model import MASK_ID, PixelARPG
 
 
 # ---------------------------------------------------------------------------

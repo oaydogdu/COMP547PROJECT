@@ -4,7 +4,7 @@ import argparse, json, sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from KlassikAR.arpg_runner import run_arpg_sweep
+from ARPG.arpg_runner import run_arpg_sweep
 
 
 def main() -> None:

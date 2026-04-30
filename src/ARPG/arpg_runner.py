@@ -84,13 +84,20 @@ def _to_tokens(x: torch.Tensor, n_levels: int = 256) -> torch.Tensor:
 
 
 def _random_mask(tokens: torch.Tensor, mask_rate: float):
-    """Randomly mask ``mask_rate`` fraction of pixels with MASK_ID.
+    """Shuffle-and-mask: random permutation, mask the last mask_rate fraction.
+
+    Masking the suffix of a random permutation (rather than iid sampling) is
+    equivalent statistically but makes the training distribution explicitly
+    match the inference decode order — the first positions in the random order
+    are revealed first, the last are revealed last, mirroring arccos decode.
 
     Returns (masked_tokens, bool_mask) where bool_mask=True at masked positions.
     """
     B, N = tokens.shape
     n_mask = max(1, int(N * mask_rate))
-    idx   = torch.rand(B, N, device=tokens.device).argsort(dim=1)[:, :n_mask]
+    # Random permutation per sample; mask the LAST n_mask positions
+    perm  = torch.rand(B, N, device=tokens.device).argsort(dim=1)
+    idx   = perm[:, N - n_mask:]          # last n_mask indices in each perm
     masked = tokens.clone()
     bmask  = torch.zeros(B, N, dtype=torch.bool, device=tokens.device)
     masked.scatter_(1, idx, MASK_ID)
@@ -137,8 +144,11 @@ def train_arpg(args: ARPGTrainArgs) -> str:
         for x, _ in bar:
             x      = x.to(device, non_blocking=True)
             tokens = _to_tokens(x, args.n_levels)
-            # Full [0, 1] range so model learns fully-masked → fully-revealed
-            rate   = torch.rand(1).item()
+            # Cosine-distributed mask rate: rate = cos(u·π/2), u~Uniform[0,1]
+            # Biases training toward higher mask ratios, matching the arccos
+            # inference schedule where early steps have high mask ratio.
+            u    = torch.rand(1).item()
+            rate = math.cos(u * math.pi / 2)
             masked, bmask = _random_mask(tokens, rate)
             optimizer.zero_grad(set_to_none=True)
             with torch.cuda.amp.autocast(enabled=use_amp):
@@ -218,6 +228,24 @@ def _arccos_sizes(N: int, n_steps: int) -> list:
     return sizes
 
 
+def _top_p_filter(probs: torch.Tensor, top_p: float) -> torch.Tensor:
+    """Nucleus (top-p) filtering on a probability tensor of shape (..., vocab).
+
+    Zeros out probabilities outside the top-p probability mass so that
+    multinomial sampling draws only from the high-confidence nucleus.
+    Returns a filtered (unnormalised) probability tensor — pass directly to
+    torch.multinomial (it normalises internally).
+    """
+    sorted_probs, sorted_idx = probs.sort(dim=-1, descending=True)
+    cumsum = sorted_probs.cumsum(dim=-1)
+    # Keep a token if its individual prob is still within the top-p budget.
+    # Shift cumsum right so the token that *first* pushes over top_p is kept.
+    remove = (cumsum - sorted_probs) > top_p
+    sorted_probs = sorted_probs.masked_fill(remove, 0.0)
+    # Scatter filtered probs back to original vocab order
+    return probs.new_zeros(probs.shape).scatter_(-1, sorted_idx, sorted_probs)
+
+
 def _decode_order(H: int, W: int, schedule: Schedule, seed: int = 42) -> torch.Tensor:
     """Return a permutation of pixel indices 0..H*W-1 for the given schedule."""
     N = H * W
@@ -244,16 +272,21 @@ def arpg_decode(
     device: torch.device,
     schedule: Schedule = "random",
     seed: int = 42,
+    top_p: float = 0.9,
+    temperature: float = 1.0,
 ) -> tuple[torch.Tensor, float]:
     """
     ARPG-style K-step parallel decode.
 
     Parameters
     ----------
-    n_steps  : K = number of forward passes.
-               K=1  -> fully parallel (fastest, lowest quality).
-               K=N  -> one pixel/step (sequential, best quality).
-    schedule : pixel reveal order -- "random" | "raster" | "row" | "column".
+    n_steps     : K = number of forward passes.
+                  K=1  -> fully parallel (fastest, lowest quality).
+                  K=N  -> one pixel/step (sequential, best quality).
+    schedule    : pixel reveal order -- "random" | "raster" | "row" | "column".
+    top_p       : nucleus sampling threshold (0, 1].  1.0 = off (pure multinomial).
+                  Recommended: 0.9.  Filters low-prob noise tokens each step.
+    temperature : softmax temperature.  <1 sharpens, >1 flattens.  Default 1.0.
 
     Returns
     -------
@@ -274,10 +307,18 @@ def arpg_decode(
     for step_size in sizes:
         if step_size == 0:          # arccos rounding: skip empty steps
             continue
-        logits  = model(tokens)                            # (B, N, C)
-        sampled = torch.multinomial(
-            logits.softmax(-1).view(-1, model.n_levels), 1
-        ).view(n_samples, N)
+        logits = model(tokens)                             # (B, N, C)
+
+        # Apply temperature scaling
+        if temperature != 1.0:
+            logits = logits / temperature
+
+        # Convert to probabilities, apply top-p nucleus filter
+        probs = logits.softmax(-1).view(-1, model.n_levels)   # (B*N, C)
+        if top_p < 1.0:
+            probs = _top_p_filter(probs, top_p)
+
+        sampled = torch.multinomial(probs, 1).view(n_samples, N)
         idx = order[cursor:cursor + step_size]
         tokens[:, idx] = sampled[:, idx]
         cursor += step_size
@@ -301,6 +342,8 @@ def run_arpg_sweep(
     schedules: tuple = ("random", "raster", "row"),
     n_samples: int = 25,
     seed: int = 42,
+    top_p: float = 0.9,
+    temperature: float = 1.0,
 ) -> dict:
     """Sweep K x schedule; save grids + sweep.json."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -324,7 +367,8 @@ def run_arpg_sweep(
     for sched in schedules:
         for K in k_values:
             imgs, elapsed = arpg_decode(
-                model, n_samples, int(K), device, schedule=sched, seed=seed
+                model, n_samples, int(K), device, schedule=sched, seed=seed,
+                top_p=top_p, temperature=temperature,
             )
             latency_ms = (elapsed / n_samples) * 1000.0
             throughput  = n_samples / max(elapsed, 1e-9)

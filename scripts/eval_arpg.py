@@ -17,8 +17,12 @@ def main() -> None:
     p.add_argument("--schedules",
                    default="random,raster,row",
                    help="comma-separated: random | raster | row | column")
-    p.add_argument("--n-samples",  type=int, default=25)
-    p.add_argument("--seed",       type=int, default=42)
+    p.add_argument("--n-samples",   type=int,   default=25)
+    p.add_argument("--seed",        type=int,   default=42)
+    p.add_argument("--top-p",       type=float, default=0.9,
+                   help="nucleus sampling threshold (0,1]; 1.0 = off")
+    p.add_argument("--temperature", type=float, default=1.0,
+                   help="softmax temperature; <1 sharpens, >1 flattens")
     args = p.parse_args()
 
     summary = run_arpg_sweep(
@@ -28,6 +32,8 @@ def main() -> None:
         schedules=tuple(args.schedules.split(",")),
         n_samples=args.n_samples,
         seed=args.seed,
+        top_p=args.top_p,
+        temperature=args.temperature,
     )
     print(json.dumps(summary, indent=2))
 

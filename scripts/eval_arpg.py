@@ -23,6 +23,9 @@ def main() -> None:
                    help="nucleus sampling threshold (0,1]; 1.0 = off")
     p.add_argument("--temperature", type=float, default=1.0,
                    help="softmax temperature; <1 sharpens, >1 flattens")
+    p.add_argument("--confidence-guided", action="store_true",
+                   help="MaskGIT-style decoding: pick top-K most confident "
+                        "predictions each step instead of following a fixed order")
     args = p.parse_args()
 
     summary = run_arpg_sweep(
@@ -34,6 +37,7 @@ def main() -> None:
         seed=args.seed,
         top_p=args.top_p,
         temperature=args.temperature,
+        confidence_guided=args.confidence_guided,
     )
     print(json.dumps(summary, indent=2))
 

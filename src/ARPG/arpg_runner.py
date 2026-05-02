@@ -274,6 +274,7 @@ def arpg_decode(
     seed: int = 42,
     top_p: float = 0.9,
     temperature: float = 1.0,
+    confidence_guided: bool = False,
 ) -> tuple[torch.Tensor, float]:
     """
     ARPG-style K-step parallel decode.
@@ -284,9 +285,15 @@ def arpg_decode(
                   K=1  -> fully parallel (fastest, lowest quality).
                   K=N  -> one pixel/step (sequential, best quality).
     schedule    : pixel reveal order -- "random" | "raster" | "row" | "column".
+                  Ignored when ``confidence_guided=True``.
     top_p       : nucleus sampling threshold (0, 1].  1.0 = off (pure multinomial).
                   Recommended: 0.9.  Filters low-prob noise tokens each step.
     temperature : softmax temperature.  <1 sharpens, >1 flattens.  Default 1.0.
+    confidence_guided
+                : MaskGIT-style decoding.  At each step, sample ALL masked
+                  positions, then keep only the top-`step_size` predictions
+                  ranked by sampled-token probability; the rest stay masked
+                  for re-prediction in later steps.  Requires no retraining.
 
     Returns
     -------
@@ -319,9 +326,26 @@ def arpg_decode(
             probs = _top_p_filter(probs, top_p)
 
         sampled = torch.multinomial(probs, 1).view(n_samples, N)
-        idx = order[cursor:cursor + step_size]
-        tokens[:, idx] = sampled[:, idx]
-        cursor += step_size
+
+        if confidence_guided:
+            # MaskGIT-style: rank predictions by sampled-token probability,
+            # commit only the top step_size most confident ones; leave the
+            # rest masked so the model can re-predict them next round with
+            # more context.  This breaks the dependency on a fixed `order`.
+            sample_probs = (
+                probs.view(n_samples, N, model.n_levels)
+                     .gather(-1, sampled.unsqueeze(-1))
+                     .squeeze(-1)
+            )                                                # (B, N)
+            # Only consider currently-masked positions; -inf locks the rest.
+            is_masked = (tokens == MASK_ID)
+            sample_probs = sample_probs.masked_fill(~is_masked, float("-inf"))
+            _, top_idx = sample_probs.topk(step_size, dim=1)  # (B, step_size)
+            tokens.scatter_(1, top_idx, sampled.gather(1, top_idx))
+        else:
+            idx = order[cursor:cursor + step_size]
+            tokens[:, idx] = sampled[:, idx]
+            cursor += step_size
 
     if device.type == "cuda":
         torch.cuda.synchronize()
@@ -344,6 +368,7 @@ def run_arpg_sweep(
     seed: int = 42,
     top_p: float = 0.9,
     temperature: float = 1.0,
+    confidence_guided: bool = False,
 ) -> dict:
     """Sweep K x schedule; save grids + sweep.json."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -361,7 +386,10 @@ def run_arpg_sweep(
     grids_dir.mkdir(parents=True, exist_ok=True)
 
     # warm-up
-    arpg_decode(model, 1, 2, device, schedule="random", seed=seed)
+    arpg_decode(model, 1, 2, device, schedule="random", seed=seed,
+                confidence_guided=confidence_guided)
+
+    tag = "_cg" if confidence_guided else ""
 
     results = []
     for sched in schedules:
@@ -369,21 +397,24 @@ def run_arpg_sweep(
             imgs, elapsed = arpg_decode(
                 model, n_samples, int(K), device, schedule=sched, seed=seed,
                 top_p=top_p, temperature=temperature,
+                confidence_guided=confidence_guided,
             )
             latency_ms = (elapsed / n_samples) * 1000.0
             throughput  = n_samples / max(elapsed, 1e-9)
-            grid_path   = grids_dir / f"{sched}_K{int(K):04d}.png"
+            grid_path   = grids_dir / f"{sched}{tag}_K{int(K):04d}.png"
             tvutils.save_image(imgs, str(grid_path), nrow=5, padding=2)
 
             rec = dict(schedule=sched, K=int(K),
+                       confidence_guided=confidence_guided,
                        latency_ms_per_image=latency_ms,
                        throughput_img_per_s=throughput,
                        grid=str(grid_path))
             results.append(rec)
-            print(f"[{sched:8s}] K={int(K):4d}  "
+            print(f"[{sched:8s}{tag}] K={int(K):4d}  "
                   f"{latency_ms:8.2f} ms/img  {throughput:.3f} img/s")
 
-    summary = {"checkpoint": checkpoint_path, "dataset": ckpt["dataset"], "sweep": results}
+    summary = {"checkpoint": checkpoint_path, "dataset": ckpt["dataset"],
+               "confidence_guided": confidence_guided, "sweep": results}
     (out_dir / "sweep.json").write_text(json.dumps(summary, indent=2))
     print(f"saved: {out_dir / 'sweep.json'}")
     return summary

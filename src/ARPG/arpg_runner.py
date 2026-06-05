@@ -66,10 +66,10 @@ def _build_loaders(dataset, data_dir, batch_size):
     elif dataset == "cifar10":
         # Grayscale: CIFAR-10 is RGB (3x32x32). Converting to single channel keeps
         # the sequence length at H*W=1024, matching the model's positional structure.
-        tf_cifar = transforms.Compose([transforms.Grayscale(), transforms.ToTensor()])
+        tf_cifar = transforms.Compose([transforms.Grayscale(), transforms.Resize(16), transforms.ToTensor()])
         train_ds = datasets.CIFAR10(data_dir, train=True,  download=True, transform=tf_cifar)
         test_ds  = datasets.CIFAR10(data_dir, train=False, download=True, transform=tf_cifar)
-        H, W = 32, 32
+        H, W = 16, 16
     else:
         raise ValueError(f"Unsupported dataset: {dataset}")
 

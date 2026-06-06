@@ -10,7 +10,7 @@ from ARPG.arpg_runner import ARPGTrainArgs, train_arpg
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--dataset",    default="fashion_mnist",
-                   choices=["fashion_mnist", "mnist", "cifar10"])
+                   choices=["fashion_mnist", "mnist", "cifar10", "cifar10_vq"])
     p.add_argument("--data-dir",   default="data")
     p.add_argument("--save-dir",   default="results/arpg")
     p.add_argument("--batch-size", type=int,   default=256)

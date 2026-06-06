@@ -58,18 +58,17 @@ def _build_loaders(dataset, data_dir, batch_size):
     if dataset == "fashion_mnist":
         train_ds = datasets.FashionMNIST(data_dir, train=True,  download=True, transform=tf)
         test_ds  = datasets.FashionMNIST(data_dir, train=False, download=True, transform=tf)
-        H, W = 28, 28
+        H, W, C = 28, 28, 1
     elif dataset == "mnist":
         train_ds = datasets.MNIST(data_dir, train=True,  download=True, transform=tf)
         test_ds  = datasets.MNIST(data_dir, train=False, download=True, transform=tf)
-        H, W = 28, 28
+        H, W, C = 28, 28, 1
     elif dataset == "cifar10":
-        # Grayscale: CIFAR-10 is RGB (3x32x32). Converting to single channel keeps
-        # the sequence length at H*W=1024, matching the model's positional structure.
-        tf_cifar = transforms.Compose([transforms.Grayscale(), transforms.Resize(16), transforms.ToTensor()])
+        # RGB 16x16: 3*16*16=768 tokens, similar to Fashion-MNIST (784).
+        tf_cifar = transforms.Compose([transforms.Resize(16), transforms.ToTensor()])
         train_ds = datasets.CIFAR10(data_dir, train=True,  download=True, transform=tf_cifar)
         test_ds  = datasets.CIFAR10(data_dir, train=False, download=True, transform=tf_cifar)
-        H, W = 16, 16
+        H, W, C = 16, 16, 3
     else:
         raise ValueError(f"Unsupported dataset: {dataset}")
 
@@ -77,7 +76,7 @@ def _build_loaders(dataset, data_dir, batch_size):
     return (
         DataLoader(train_ds, batch_size=batch_size, shuffle=True,  **kw),
         DataLoader(test_ds,  batch_size=batch_size, shuffle=False, **kw),
-        H, W,
+        H, W, C,
     )
 
 
@@ -117,11 +116,11 @@ def train_arpg(args: ARPGTrainArgs) -> str:
     torch.manual_seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    train_loader, test_loader, H, W = _build_loaders(
+    train_loader, test_loader, H, W, C = _build_loaders(
         args.dataset, args.data_dir, args.batch_size
     )
     model = PixelARPG(
-        H=H, W=W, d_model=args.d_model, n_heads=args.n_heads,
+        H=H, W=W, C=C, d_model=args.d_model, n_heads=args.n_heads,
         n_layers=args.n_layers, n_levels=args.n_levels, dropout=args.dropout,
     ).to(device)
 
@@ -191,7 +190,7 @@ def train_arpg(args: ARPGTrainArgs) -> str:
     ckpt_path = ckpt_dir / f"{run}.pt"
     torch.save({
         "model_state_dict": model.state_dict(),
-        "H": H, "W": W, "d_model": args.d_model, "n_heads": args.n_heads,
+        "H": H, "W": W, "C": C, "d_model": args.d_model, "n_heads": args.n_heads,
         "n_layers": args.n_layers, "n_levels": args.n_levels,
         "dataset": args.dataset, "history": history,
     }, ckpt_path)
@@ -354,7 +353,7 @@ def arpg_decode(
         torch.cuda.synchronize()
     elapsed = time.perf_counter() - t0
 
-    imgs = tokens.float().view(n_samples, 1, H, W) / (model.n_levels - 1)
+    imgs = tokens.float().view(n_samples, model.C, H, W) / (model.n_levels - 1)
     return imgs, elapsed
 
 
@@ -378,7 +377,7 @@ def run_arpg_sweep(
     ckpt   = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
     model = PixelARPG(
-        H=ckpt["H"], W=ckpt["W"],
+        H=ckpt["H"], W=ckpt["W"], C=ckpt.get("C", 1),
         d_model=ckpt["d_model"], n_heads=ckpt["n_heads"],
         n_layers=ckpt["n_layers"], n_levels=ckpt["n_levels"],
     ).to(device).eval()

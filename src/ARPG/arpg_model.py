@@ -36,6 +36,7 @@ class PixelARPG(nn.Module):
         self,
         H: int = 28,
         W: int = 28,
+        C: int = 1,
         d_model: int = 128,
         n_heads: int = 4,
         n_layers: int = 6,
@@ -45,16 +46,25 @@ class PixelARPG(nn.Module):
         super().__init__()
         self.H = H
         self.W = W
-        self.N = H * W
+        self.C = C
+        self.N = C * H * W
         self.n_levels = n_levels
 
         # Pixel-value embedding: 0..255 + mask token (index 256)
         self.pixel_embed = nn.Embedding(n_levels + 1, d_model)
 
-        # Separate row / col position embeddings (concatenated -> d_model)
-        assert d_model % 2 == 0
-        self.row_embed = nn.Embedding(H, d_model // 2)
-        self.col_embed = nn.Embedding(W, d_model // 2)
+        if C == 1:
+            # Grayscale: row + col embeddings split d_model in half (backward compat)
+            assert d_model % 2 == 0
+            self.chan_embed = None
+            self.row_embed  = nn.Embedding(H, d_model // 2)
+            self.col_embed  = nn.Embedding(W, d_model // 2)
+        else:
+            # Multi-channel: channel + row + col split d_model in thirds
+            assert d_model % 3 == 0, "d_model must be divisible by 3 for multi-channel"
+            self.chan_embed = nn.Embedding(C, d_model // 3)
+            self.row_embed  = nn.Embedding(H, d_model // 3)
+            self.col_embed  = nn.Embedding(W, d_model // 3)
 
         # Bidirectional Transformer encoder (no causal mask)
         enc_layer = nn.TransformerEncoderLayer(
@@ -72,10 +82,23 @@ class PixelARPG(nn.Module):
         self.head = nn.Linear(d_model, n_levels)
 
     def _pos_embed(self, device: torch.device) -> torch.Tensor:
-        """Build (N, d_model) position tensor for all H*W pixels."""
-        rows = torch.arange(self.H, device=device).repeat_interleave(self.W)
-        cols = torch.arange(self.W, device=device).repeat(self.H)
-        return torch.cat([self.row_embed(rows), self.col_embed(cols)], dim=-1)
+        """Build (N, d_model) position tensor for all C*H*W tokens.
+        Channel-first ordering: [all ch0 pixels, all ch1 pixels, ...]
+        """
+        if self.C == 1:
+            rows = torch.arange(self.H, device=device).repeat_interleave(self.W)
+            cols = torch.arange(self.W, device=device).repeat(self.H)
+            return torch.cat([self.row_embed(rows), self.col_embed(cols)], dim=-1)
+        else:
+            n_sp = self.H * self.W
+            chans = torch.arange(self.C, device=device).repeat_interleave(n_sp)
+            rows  = torch.arange(self.H, device=device).repeat_interleave(self.W).repeat(self.C)
+            cols  = torch.arange(self.W, device=device).repeat(self.H).repeat(self.C)
+            return torch.cat([
+                self.chan_embed(chans),
+                self.row_embed(rows),
+                self.col_embed(cols),
+            ], dim=-1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """

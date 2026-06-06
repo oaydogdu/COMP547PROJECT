@@ -64,11 +64,11 @@ def _build_loaders(dataset, data_dir, batch_size):
         test_ds  = datasets.MNIST(data_dir, train=False, download=True, transform=tf)
         H, W, C = 28, 28, 1
     elif dataset == "cifar10":
-        # RGB 16x16: 3*16*16=768 tokens, similar to Fashion-MNIST (784).
-        tf_cifar = transforms.Compose([transforms.Resize(16), transforms.ToTensor()])
+        # Grayscale 16x16: 256 tokens, tractable for pixel-level prediction.
+        tf_cifar = transforms.Compose([transforms.Grayscale(), transforms.Resize(16), transforms.ToTensor()])
         train_ds = datasets.CIFAR10(data_dir, train=True,  download=True, transform=tf_cifar)
         test_ds  = datasets.CIFAR10(data_dir, train=False, download=True, transform=tf_cifar)
-        H, W, C = 16, 16, 3
+        H, W, C = 16, 16, 1
     else:
         raise ValueError(f"Unsupported dataset: {dataset}")
 

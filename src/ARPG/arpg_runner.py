@@ -23,7 +23,7 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torchvision import datasets, transforms
 from torchvision import utils as tvutils
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 
 from ARPG.arpg_model import MASK_ID, PixelARPG
@@ -47,13 +47,14 @@ class ARPGTrainArgs:
     n_levels: int = 256
     dropout: float = 0.05
     seed: int = 1
+    token_file: str = ""   # for cifar10_vq: path to pre-encoded token .pt file
 
 
 # ---------------------------------------------------------------------------
 # Data helpers
 # ---------------------------------------------------------------------------
 
-def _build_loaders(dataset, data_dir, batch_size):
+def _build_loaders(dataset, data_dir, batch_size, token_file=""):
     tf = transforms.ToTensor()
     if dataset == "fashion_mnist":
         train_ds = datasets.FashionMNIST(data_dir, train=True,  download=True, transform=tf)
@@ -69,6 +70,17 @@ def _build_loaders(dataset, data_dir, batch_size):
         train_ds = datasets.CIFAR10(data_dir, train=True,  download=True, transform=tf_cifar)
         test_ds  = datasets.CIFAR10(data_dir, train=False, download=True, transform=tf_cifar)
         H, W, C = 16, 16, 1
+    elif dataset == "cifar10_vq":
+        # VQ-tokenized CIFAR-10: load pre-encoded (N, 8, 8) integer tokens.
+        assert token_file, "token_file required for cifar10_vq dataset"
+        tok = torch.load(token_file, map_location="cpu", weights_only=False)
+        # Each sample: (8*8,) integer token sequence treated as 1-channel 8x8 image
+        train_tok = tok["train"].reshape(-1, 1, 8, 8).float()   # (50000, 1, 8, 8)
+        test_tok  = tok["test"].reshape(-1, 1, 8, 8).float()    # (10000, 1, 8, 8)
+        # Dummy second column for label compatibility
+        train_ds = TensorDataset(train_tok, torch.zeros(len(train_tok), dtype=torch.long))
+        test_ds  = TensorDataset(test_tok,  torch.zeros(len(test_tok),  dtype=torch.long))
+        H, W, C = 8, 8, 1
     else:
         raise ValueError(f"Unsupported dataset: {dataset}")
 
@@ -117,7 +129,7 @@ def train_arpg(args: ARPGTrainArgs) -> str:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     train_loader, test_loader, H, W, C = _build_loaders(
-        args.dataset, args.data_dir, args.batch_size
+        args.dataset, args.data_dir, args.batch_size, token_file=args.token_file
     )
     model = PixelARPG(
         H=H, W=W, C=C, d_model=args.d_model, n_heads=args.n_heads,
@@ -277,6 +289,7 @@ def arpg_decode(
     top_p: float = 0.9,
     temperature: float = 1.0,
     confidence_guided: bool = False,
+    vq_decoder=None,
 ) -> tuple[torch.Tensor, float]:
     """
     ARPG-style K-step parallel decode.
@@ -353,7 +366,12 @@ def arpg_decode(
         torch.cuda.synchronize()
     elapsed = time.perf_counter() - t0
 
-    imgs = tokens.float().view(n_samples, model.C, H, W) / (model.n_levels - 1)
+    if vq_decoder is not None:
+        # VQ mode: decode integer indices through VQ-VAE decoder -> RGB images
+        with torch.no_grad():
+            imgs = vq_decoder(tokens.reshape(n_samples, H, W))  # (B, 3, 32, 32)
+    else:
+        imgs = tokens.float().view(n_samples, model.C, H, W) / (model.n_levels - 1)
     return imgs, elapsed
 
 
@@ -371,6 +389,7 @@ def run_arpg_sweep(
     top_p: float = 0.9,
     temperature: float = 1.0,
     confidence_guided: bool = False,
+    vq_ckpt_path: str = "",
 ) -> dict:
     """Sweep K x schedule; save grids + sweep.json."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -387,6 +406,21 @@ def run_arpg_sweep(
     grids_dir = out_dir / "grids"
     grids_dir.mkdir(parents=True, exist_ok=True)
 
+    # Load VQ decoder if provided
+    vq_decoder = None
+    if vq_ckpt_path:
+        import sys
+        from pathlib import Path as _Path
+        sys.path.insert(0, str(_Path(vq_ckpt_path).resolve().parents[2] / "src"))
+        from VQVAE.vqvae import VQVAE
+        vq_ckpt = torch.load(vq_ckpt_path, map_location=device, weights_only=False)
+        vqvae = VQVAE(n_embeddings=vq_ckpt["n_embeddings"],
+                      latent_dim=vq_ckpt["latent_dim"]).to(device)
+        vqvae.load_state_dict(vq_ckpt["model_state_dict"])
+        vqvae.eval()
+        vq_decoder = vqvae.decode_indices
+        print(f"Loaded VQ decoder: {vq_ckpt_path}")
+
     # warm-up
     arpg_decode(model, 1, 2, device, schedule="random", seed=seed,
                 confidence_guided=confidence_guided)
@@ -400,6 +434,7 @@ def run_arpg_sweep(
                 model, n_samples, int(K), device, schedule=sched, seed=seed,
                 top_p=top_p, temperature=temperature,
                 confidence_guided=confidence_guided,
+                vq_decoder=vq_decoder,
             )
             latency_ms = (elapsed / n_samples) * 1000.0
             throughput  = n_samples / max(elapsed, 1e-9)

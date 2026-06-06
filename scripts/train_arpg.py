@@ -20,6 +20,8 @@ def main() -> None:
     p.add_argument("--n-heads",    type=int,   default=4)
     p.add_argument("--n-layers",   type=int,   default=6)
     p.add_argument("--seed",       type=int,   default=1)
+    p.add_argument("--token-file", default="",
+                   help="pre-encoded VQ token file (.pt) for cifar10_vq dataset")
     args = p.parse_args()
 
     train_arpg(ARPGTrainArgs(
@@ -28,6 +30,7 @@ def main() -> None:
         epochs=args.epochs, lr=args.lr,
         d_model=args.d_model, n_heads=args.n_heads,
         n_layers=args.n_layers, seed=args.seed,
+        token_file=args.token_file,
     ))
 
 

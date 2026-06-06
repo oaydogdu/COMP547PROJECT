@@ -26,6 +26,8 @@ def main() -> None:
     p.add_argument("--confidence-guided", action="store_true",
                    help="MaskGIT-style decoding: pick top-K most confident "
                         "predictions each step instead of following a fixed order")
+    p.add_argument("--vq-ckpt", default="",
+                   help="path to VQ-VAE checkpoint for token decoding (cifar10_vq)")
     args = p.parse_args()
 
     summary = run_arpg_sweep(
@@ -38,6 +40,7 @@ def main() -> None:
         top_p=args.top_p,
         temperature=args.temperature,
         confidence_guided=args.confidence_guided,
+        vq_ckpt_path=args.vq_ckpt,
     )
     print(json.dumps(summary, indent=2))
 

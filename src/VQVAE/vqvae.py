@@ -19,37 +19,50 @@ import torch.nn.functional as F
 
 
 class VectorQuantizer(nn.Module):
-    def __init__(self, n_embeddings: int = 512, emb_dim: int = 256, beta: float = 0.25):
+    """EMA-based VQ quantizer — prevents codebook collapse."""
+    def __init__(self, n_embeddings: int = 512, emb_dim: int = 256,
+                 beta: float = 0.25, decay: float = 0.99, eps: float = 1e-5):
         super().__init__()
         self.n_embeddings = n_embeddings
         self.emb_dim      = emb_dim
         self.beta         = beta
-        self.embedding = nn.Embedding(n_embeddings, emb_dim)
-        self.embedding.weight.data.uniform_(-1 / n_embeddings, 1 / n_embeddings)
+        self.decay        = decay
+        self.eps          = eps
+
+        embed = torch.randn(n_embeddings, emb_dim)
+        self.register_buffer("embedding",   embed)
+        self.register_buffer("cluster_size", torch.zeros(n_embeddings))
+        self.register_buffer("embed_avg",   embed.clone())
 
     def forward(self, z: torch.Tensor):
         """z: (B, emb_dim, H, W) -> z_q, indices (B,H,W), vq_loss"""
         B, C, H, W = z.shape
         z_flat = z.permute(0, 2, 3, 1).reshape(-1, C)          # (B*H*W, C)
 
-        # L2 distances to all codebook vectors
         d = (z_flat ** 2).sum(1, keepdim=True) \
-            + (self.embedding.weight ** 2).sum(1) \
-            - 2 * (z_flat @ self.embedding.weight.T)
+            + (self.embedding ** 2).sum(1) \
+            - 2 * (z_flat @ self.embedding.T)
 
         indices = d.argmin(1)                                    # (B*H*W,)
-        z_q = self.embedding(indices).reshape(B, H, W, C).permute(0, 3, 1, 2)
+        z_q = self.embedding[indices].reshape(B, H, W, C).permute(0, 3, 1, 2)
 
-        vq_loss = self.beta * F.mse_loss(z_q.detach(), z) \
-                + F.mse_loss(z_q, z.detach())
+        if self.training:
+            # EMA codebook update — prevents collapse
+            one_hot = F.one_hot(indices, self.n_embeddings).float()  # (B*H*W, K)
+            self.cluster_size.mul_(self.decay).add_(one_hot.sum(0) * (1 - self.decay))
+            self.embed_avg.mul_(self.decay).add_((z_flat.T @ one_hot).T * (1 - self.decay))
+            n = self.cluster_size.sum()
+            smoothed = (self.cluster_size + self.eps) / (n + self.n_embeddings * self.eps) * n
+            self.embedding.copy_(self.embed_avg / smoothed.unsqueeze(1))
 
+        vq_loss = self.beta * F.mse_loss(z_q.detach(), z)       # commitment only
         z_q = z + (z_q - z).detach()                            # straight-through
         return z_q, indices.reshape(B, H, W), vq_loss
 
     def lookup(self, indices: torch.Tensor) -> torch.Tensor:
         """indices: (B, H, W) -> (B, emb_dim, H, W)"""
         B, H, W = indices.shape
-        z_q = self.embedding(indices.reshape(-1))
+        z_q = self.embedding[indices.reshape(-1)]
         return z_q.reshape(B, H, W, self.emb_dim).permute(0, 3, 1, 2)
 
 
@@ -115,5 +128,5 @@ class VQVAE(nn.Module):
 
     def decode_indices(self, indices: torch.Tensor) -> torch.Tensor:
         """indices: (B,8,8) -> images (B,3,32,32) in [0,1]"""
-        z_q = self.quantizer.lookup(indices)
+        z_q = self.quantizer.lookup(indices.long())
         return self.decoder(z_q)

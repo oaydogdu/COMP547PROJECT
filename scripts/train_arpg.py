@@ -19,6 +19,8 @@ def main() -> None:
     p.add_argument("--d-model",    type=int,   default=128)
     p.add_argument("--n-heads",    type=int,   default=4)
     p.add_argument("--n-layers",   type=int,   default=6)
+    p.add_argument("--n-levels",   type=int,   default=256,
+                   help="vocabulary size (256 for pixels, 512 for VQ tokens)")
     p.add_argument("--seed",       type=int,   default=1)
     p.add_argument("--token-file", default="",
                    help="pre-encoded VQ token file (.pt) for cifar10_vq dataset")
@@ -29,7 +31,7 @@ def main() -> None:
         save_dir=args.save_dir, batch_size=args.batch_size,
         epochs=args.epochs, lr=args.lr,
         d_model=args.d_model, n_heads=args.n_heads,
-        n_layers=args.n_layers, seed=args.seed,
+        n_layers=args.n_layers, n_levels=args.n_levels, seed=args.seed,
         token_file=args.token_file,
     ))
 

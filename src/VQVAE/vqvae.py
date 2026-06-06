@@ -47,13 +47,14 @@ class VectorQuantizer(nn.Module):
         z_q = self.embedding[indices].reshape(B, H, W, C).permute(0, 3, 1, 2)
 
         if self.training:
-            # EMA codebook update — prevents collapse
-            one_hot = F.one_hot(indices, self.n_embeddings).float()  # (B*H*W, K)
-            self.cluster_size.mul_(self.decay).add_(one_hot.sum(0) * (1 - self.decay))
-            self.embed_avg.mul_(self.decay).add_((z_flat.T @ one_hot).T * (1 - self.decay))
-            n = self.cluster_size.sum()
-            smoothed = (self.cluster_size + self.eps) / (n + self.n_embeddings * self.eps) * n
-            self.embedding.copy_(self.embed_avg / smoothed.unsqueeze(1))
+            with torch.no_grad():
+                # EMA codebook update — prevents collapse
+                one_hot = F.one_hot(indices, self.n_embeddings).float()  # (B*H*W, K)
+                self.cluster_size.mul_(self.decay).add_(one_hot.sum(0) * (1 - self.decay))
+                self.embed_avg.mul_(self.decay).add_((z_flat.detach().T @ one_hot).T * (1 - self.decay))
+                n = self.cluster_size.sum()
+                smoothed = (self.cluster_size + self.eps) / (n + self.n_embeddings * self.eps) * n
+                self.embedding.copy_(self.embed_avg / smoothed.unsqueeze(1))
 
         vq_loss = self.beta * F.mse_loss(z_q.detach(), z)       # commitment only
         z_q = z + (z_q - z).detach()                            # straight-through

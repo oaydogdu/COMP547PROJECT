@@ -77,19 +77,12 @@ class PixelCNNPP(nn.Module):
 
         num_mix = 3 if self.input_channels == 1 else 10
         self.nin_out = NIN(nr_filters, num_mix * nr_logistic_mix)
-        self.init_padding: torch.Tensor | None = None
 
     def forward(self, x: torch.Tensor, sample: bool = False) -> torch.Tensor:
-        if self.init_padding is None and not sample:
-            xs = [int(y) for y in x.size()]
-            self.init_padding = torch.ones(xs[0], 1, xs[2], xs[3], device=x.device)
-
-        if sample:
-            xs = [int(y) for y in x.size()]
-            padding = torch.ones(xs[0], 1, xs[2], xs[3], device=x.device)
-            x = torch.cat((x, padding), 1)
-        else:
-            x = torch.cat((x, self.init_padding), 1)
+        padding = torch.ones(
+            x.size(0), 1, x.size(2), x.size(3), device=x.device, dtype=x.dtype
+        )
+        x = torch.cat((x, padding), 1)
 
         u_list = [self.u_init(x)]
         ul_list = [self.ul_init[0](x) + self.ul_init[1](x)]

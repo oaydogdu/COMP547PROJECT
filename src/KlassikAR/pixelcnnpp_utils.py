@@ -166,14 +166,14 @@ def sample_from_discretized_mix_logistic(l: torch.Tensor, nr_mix: int) -> torch.
 
 
 def down_shift(x: torch.Tensor, pad: nn.Module | None = None) -> torch.Tensor:
-    xs = [int(y) for y in x.size()]
-    x = x[:, :, : xs[2] - 1, :]
-    pad = nn.ZeroPad2d((0, 0, 1, 0)) if pad is None else pad
-    return pad(x)
+    x = x[:, :, :-1, :]
+    if pad is not None:
+        return pad(x)
+    return F.pad(x, (0, 0, 1, 0))
 
 
 def right_shift(x: torch.Tensor, pad: nn.Module | None = None) -> torch.Tensor:
-    xs = [int(y) for y in x.size()]
-    x = x[:, :, :, : xs[3] - 1]
-    pad = nn.ZeroPad2d((1, 0, 0, 0)) if pad is None else pad
-    return pad(x)
+    x = x[:, :, :, :-1]
+    if pad is not None:
+        return pad(x)
+    return F.pad(x, (1, 0, 0, 0))

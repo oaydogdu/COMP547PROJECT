@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
-from torch.nn.utils import weight_norm as wn
+
+try:
+    from torch.nn.utils.parametrizations import weight_norm as wn
+except ImportError:
+    from torch.nn.utils import weight_norm as wn
 
 from KlassikAR.pixelcnnpp_utils import concat_elu, down_shift, right_shift
 
@@ -42,13 +46,12 @@ class DownShiftedConv2d(nn.Module):
                 0,
             )
         )
-        if shift_output_down:
-            self.down_shift = lambda x: down_shift(x, pad=nn.ZeroPad2d((0, 0, 1, 0)))
+        self.shift_pad = nn.ZeroPad2d((0, 0, 1, 0)) if shift_output_down else None
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.pad(x)
         x = self.conv(x)
-        return self.down_shift(x) if self.shift_output_down else x
+        return down_shift(x, pad=self.shift_pad) if self.shift_output_down else x
 
 
 class DownShiftedDeconv2d(nn.Module):
@@ -82,13 +85,12 @@ class DownRightShiftedConv2d(nn.Module):
         self.pad = nn.ZeroPad2d((filter_size[1] - 1, 0, filter_size[0] - 1, 0))
         self.conv = wn(nn.Conv2d(num_filters_in, num_filters_out, filter_size, stride=stride))
         self.shift_output_right = shift_output_right
-        if shift_output_right:
-            self.right_shift = lambda x: right_shift(x, pad=nn.ZeroPad2d((1, 0, 0, 0)))
+        self.shift_pad = nn.ZeroPad2d((1, 0, 0, 0)) if shift_output_right else None
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.pad(x)
         x = self.conv(x)
-        return self.right_shift(x) if self.shift_output_right else x
+        return right_shift(x, pad=self.shift_pad) if self.shift_output_right else x
 
 
 class DownRightShiftedDeconv2d(nn.Module):
@@ -126,6 +128,5 @@ class GatedResNet(nn.Module):
         x = concat_elu(x)
         x = self.dropout(x)
         x = self.conv_out(x)
-        a_chunk, b_chunk = torch.chunk(x, 2, dim=1)
-        c3 = a_chunk * torch.sigmoid(b_chunk)
-        return og_x + c3
+        a_chunk, b_chunk = x.chunk(2, dim=1)
+        return og_x + a_chunk * b_chunk.sigmoid()

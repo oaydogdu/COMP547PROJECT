@@ -111,10 +111,19 @@ def sample_grid(
     return data, latency_ms, throughput
 
 
+def _configure_cuda() -> None:
+    if not torch.cuda.is_available():
+        return
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+
+
 def train_pixelcnnpp(args: PixelCNNPPTrainArgs) -> str:
     torch.manual_seed(args.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
+        _configure_cuda()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_loader, test_loader, obs = _build_loaders(
@@ -148,7 +157,7 @@ def train_pixelcnnpp(args: PixelCNNPPTrainArgs) -> str:
         train_items = 0
         train_bar = tqdm(train_loader, desc=f"train {epoch + 1}/{args.epochs}")
         for x, _ in train_bar:
-            x = x.to(device, non_blocking=True)
+            x = x.to(device)
             out = model(x)
             loss = loss_op(x, out)
             optimizer.zero_grad(set_to_none=True)
@@ -167,7 +176,7 @@ def train_pixelcnnpp(args: PixelCNNPPTrainArgs) -> str:
         test_items = 0
         with torch.no_grad():
             for x, _ in test_loader:
-                x = x.to(device, non_blocking=True)
+                x = x.to(device)
                 out = model(x)
                 loss = loss_op(x, out)
                 bits = loss.item() / (x.size(0) * math.prod(obs) * math.log(2.0))

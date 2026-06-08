@@ -19,6 +19,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--nr-logistic-mix", type=int, default=10)
     p.add_argument("--seed", type=int, default=1)
     p.add_argument("--sample-batch-size", type=int, default=25)
+    p.add_argument("--num-workers", type=int, default=0,
+                   help="DataLoader workers (use 0 on Colab to avoid CUDA errors)")
     return p.parse_args()
 
 
@@ -38,6 +40,7 @@ def main() -> None:
             nr_logistic_mix=args.nr_logistic_mix,
             seed=args.seed,
             sample_batch_size=args.sample_batch_size,
+            num_workers=args.num_workers,
         )
     )
     print(f"saved_checkpoint={ckpt}")

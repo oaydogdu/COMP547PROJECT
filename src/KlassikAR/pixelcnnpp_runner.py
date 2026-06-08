@@ -36,6 +36,7 @@ class PixelCNNPPTrainArgs:
     nr_logistic_mix: int
     seed: int
     sample_batch_size: int
+    num_workers: int = 0
 
 
 def _rescale(x: torch.Tensor) -> torch.Tensor:
@@ -46,9 +47,15 @@ def _rescale_inv(x: torch.Tensor) -> torch.Tensor:
     return 0.5 * x + 0.5
 
 
-def _build_loaders(dataset: str, data_dir: str, batch_size: int) -> tuple[DataLoader, DataLoader, tuple[int, int, int]]:
+def _build_loaders(
+    dataset: str, data_dir: str, batch_size: int, num_workers: int = 0
+) -> tuple[DataLoader, DataLoader, tuple[int, int, int]]:
     ds_transforms = transforms.Compose([transforms.ToTensor(), transforms.Lambda(_rescale)])
-    kwargs = {"num_workers": 2, "pin_memory": True, "drop_last": True}
+    kwargs = {
+        "num_workers": num_workers,
+        "pin_memory": num_workers > 0 and torch.cuda.is_available(),
+        "drop_last": True,
+    }
 
     if dataset == "fashion_mnist":
         train_set = datasets.FashionMNIST(data_dir, download=True, train=True, transform=ds_transforms)
@@ -110,7 +117,9 @@ def train_pixelcnnpp(args: PixelCNNPPTrainArgs) -> str:
         torch.cuda.manual_seed_all(args.seed)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    train_loader, test_loader, obs = _build_loaders(args.dataset, args.data_dir, args.batch_size)
+    train_loader, test_loader, obs = _build_loaders(
+        args.dataset, args.data_dir, args.batch_size, args.num_workers
+    )
     input_channels = obs[0]
 
     model = PixelCNNPP(

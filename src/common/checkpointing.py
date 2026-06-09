@@ -77,3 +77,76 @@ def backup_results_tree(src: str | Path, drive_root: str | Path, tag: str) -> Pa
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(src, dest)
     return dest
+
+
+def snapshot_to_drive(src: str | Path, drive_dest: str | Path) -> Path:
+    """Overwrite a stable Drive folder (used for resume after disconnect)."""
+    src = Path(src)
+    dest = Path(drive_dest)
+    if not src.exists():
+        raise FileNotFoundError(f"Nothing to back up: {src}")
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(src, dest)
+    return dest
+
+
+def find_arpg_resume_source(drive_base: str | Path) -> Path | None:
+    """Pick the best ARPG backup on Drive: stable latest, then newest timestamped."""
+    base = Path(drive_base)
+    stable = base / "arpg_fashion_latest"
+    if (stable / "checkpoints" / "last.pt").exists():
+        return stable
+    if (stable / "checkpoints").exists() and list((stable / "checkpoints").glob("*.pt")):
+        return stable
+
+    candidates: list[Path] = []
+    for p in base.glob("arpg_*"):
+        folder = p / "arpg_fashion" if (p / "arpg_fashion").exists() else p
+        if (folder / "checkpoints").exists() and list((folder / "checkpoints").glob("*.pt")):
+            candidates.append(folder)
+    direct = base / "arpg_fashion"
+    if (direct / "checkpoints").exists() and list((direct / "checkpoints").glob("*.pt")):
+        candidates.append(direct)
+    return max(candidates, key=lambda p: p.stat().st_mtime) if candidates else None
+
+
+def restore_arpg_for_resume(
+    local_dir: str | Path,
+    drive_base: str | Path,
+    *,
+    force: bool = False,
+) -> str:
+    """
+    Restore ARPG checkpoints from Drive when local state is missing.
+
+    Returns status: 'local_ok', 'restored', or 'fresh'.
+    """
+    local = Path(local_dir)
+    ckpt_dir = local / "checkpoints"
+    has_local = (ckpt_dir / "last.pt").exists() or bool(list(ckpt_dir.glob("epoch_*.pt")))
+
+    if has_local and not force:
+        epoch = "?"
+        if (ckpt_dir / "last.pt").exists():
+            import torch
+
+            ckpt = torch.load(ckpt_dir / "last.pt", map_location="cpu", weights_only=False)
+            epoch = str(ckpt.get("epoch", "?"))
+        print(f"local_ok: ARPG checkpoints mevcut (epoch={epoch})")
+        return "local_ok"
+
+    src = find_arpg_resume_source(drive_base)
+    if src is None:
+        print("fresh: Drive'da ARPG yedegi yok, sifirdan baslanacak")
+        return "fresh"
+
+    if local.exists():
+        shutil.rmtree(local)
+    shutil.copytree(src, local)
+    import torch
+
+    ckpt = torch.load(ckpt_dir / "last.pt", map_location="cpu", weights_only=False)
+    print(f"restored: {src} -> epoch={ckpt.get('epoch', '?')}")
+    return "restored"

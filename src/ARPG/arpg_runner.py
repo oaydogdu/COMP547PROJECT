@@ -19,7 +19,12 @@ from torchvision import utils as tvutils
 from tqdm import tqdm
 
 from ARPG.arpg_model import MASK_ID, PixelARPG
-from common.checkpointing import load_training_checkpoint, save_training_checkpoint, write_metrics
+from common.checkpointing import (
+    load_training_checkpoint,
+    save_training_checkpoint,
+    snapshot_to_drive,
+    write_metrics,
+)
 
 
 @dataclass
@@ -40,6 +45,7 @@ class ARPGTrainArgs:
     save_every_epochs: int = 5
     resume_from: str | None = None
     auto_resume: bool = True
+    drive_backup_dir: str | None = None
 
 
 def _build_loaders(dataset: str, data_dir: str, batch_size: int, num_workers: int = 0):
@@ -219,6 +225,9 @@ def train_arpg(args: ARPGTrainArgs) -> str:
             scheduler=scheduler,
             scaler=scaler,
         )
+        if args.drive_backup_dir:
+            dest = snapshot_to_drive(save_dir, args.drive_backup_dir)
+            print(f"drive_backup=epoch_{epoch + 1} -> {dest}")
 
         if args.save_every_epochs > 0 and (epoch + 1) % args.save_every_epochs == 0:
             save_training_checkpoint(

@@ -25,6 +25,11 @@ def main() -> None:
     p.add_argument("--save-every-epochs", type=int, default=5)
     p.add_argument("--resume-from", type=str, default=None)
     p.add_argument("--fresh", action="store_true")
+    p.add_argument(
+        "--drive-backup-dir",
+        default=None,
+        help="Stable Google Drive path; overwritten each epoch for disconnect resume",
+    )
     args = p.parse_args()
 
     train_arpg(
@@ -43,6 +48,7 @@ def main() -> None:
             save_every_epochs=args.save_every_epochs,
             resume_from=args.resume_from,
             auto_resume=not args.fresh,
+            drive_backup_dir=args.drive_backup_dir,
         )
     )
 

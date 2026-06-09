@@ -1,6 +1,9 @@
 """CLI: K-sweep + decoding schedule comparison for PixelARPG."""
 from __future__ import annotations
-import argparse, json, sys
+
+import argparse
+import json
+import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -10,15 +13,14 @@ from ARPG.arpg_runner import run_arpg_sweep
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--checkpoint", required=True)
-    p.add_argument("--out-dir",    required=True)
-    p.add_argument("--ks",
-                   default="1,2,4,7,14,28,56,112,196,392,784",
-                   help="comma-separated K values (number of decode steps)")
-    p.add_argument("--schedules",
-                   default="random,raster,row",
-                   help="comma-separated: random | raster | row | column")
-    p.add_argument("--n-samples",  type=int, default=25)
-    p.add_argument("--seed",       type=int, default=42)
+    p.add_argument("--out-dir", required=True)
+    p.add_argument("--ks", default="1,2,4,7,14,28,56,112,196,392,784")
+    p.add_argument("--schedules", default="random,raster,row")
+    p.add_argument("--n-samples", type=int, default=25)
+    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--top-p", type=float, default=0.9)
+    p.add_argument("--temperature", type=float, default=1.0)
+    p.add_argument("--confidence-guided", action="store_true")
     args = p.parse_args()
 
     summary = run_arpg_sweep(
@@ -28,6 +30,9 @@ def main() -> None:
         schedules=tuple(args.schedules.split(",")),
         n_samples=args.n_samples,
         seed=args.seed,
+        top_p=args.top_p,
+        temperature=args.temperature,
+        confidence_guided=args.confidence_guided,
     )
     print(json.dumps(summary, indent=2))
 

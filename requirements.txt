@@ -5,3 +5,4 @@ PyYAML
 tqdm
 matplotlib
 scipy
+pandas

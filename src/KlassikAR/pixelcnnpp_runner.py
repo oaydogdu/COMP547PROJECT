@@ -20,6 +20,7 @@ from KlassikAR.pixelcnnpp_utils import (
     sample_from_discretized_mix_logistic,
     sample_from_discretized_mix_logistic_1d,
 )
+from common.checkpointing import load_training_checkpoint, save_training_checkpoint, write_metrics
 
 
 @dataclass
@@ -37,6 +38,9 @@ class PixelCNNPPTrainArgs:
     seed: int
     sample_batch_size: int
     num_workers: int = 0
+    save_every_epochs: int = 5
+    resume_from: str | None = None
+    auto_resume: bool = True
 
 
 def _rescale(x: torch.Tensor) -> torch.Tensor:
@@ -119,6 +123,37 @@ def _configure_cuda() -> None:
     torch.backends.cudnn.allow_tf32 = False
 
 
+def _checkpoint_extra(args: PixelCNNPPTrainArgs, obs: tuple[int, int, int]) -> dict:
+    return {
+        "dataset": args.dataset,
+        "obs": obs,
+        "nr_resnet": args.nr_resnet,
+        "nr_filters": args.nr_filters,
+        "nr_logistic_mix": args.nr_logistic_mix,
+        "train_args": {
+            "dataset": args.dataset,
+            "batch_size": args.batch_size,
+            "epochs": args.epochs,
+            "lr": args.lr,
+            "lr_decay": args.lr_decay,
+            "nr_resnet": args.nr_resnet,
+            "nr_filters": args.nr_filters,
+            "nr_logistic_mix": args.nr_logistic_mix,
+            "seed": args.seed,
+        },
+    }
+
+
+def find_resume_checkpoint(save_dir: str | Path) -> Path | None:
+    ckpt_dir = Path(save_dir) / "checkpoints"
+    for name in ("last.pt", "best.pt"):
+        path = ckpt_dir / name
+        if path.exists():
+            return path
+    epoch_ckpts = sorted(ckpt_dir.glob("epoch_*.pt"))
+    return epoch_ckpts[-1] if epoch_ckpts else None
+
+
 def train_pixelcnnpp(args: PixelCNNPPTrainArgs) -> str:
     torch.manual_seed(args.seed)
     if torch.cuda.is_available():
@@ -143,15 +178,37 @@ def train_pixelcnnpp(args: PixelCNNPPTrainArgs) -> str:
     scheduler = StepLR(optimizer, step_size=1, gamma=args.lr_decay)
 
     run_name = f"pixelcnnpp_{args.dataset}_lr{args.lr:.5f}_res{args.nr_resnet}_f{args.nr_filters}"
-    ckpt_dir = Path(args.save_dir) / "checkpoints"
-    img_dir = Path(args.save_dir) / "samples"
-    metrics_dir = Path(args.save_dir) / "metrics"
-    ckpt_dir.mkdir(parents=True, exist_ok=True)
-    img_dir.mkdir(parents=True, exist_ok=True)
-    metrics_dir.mkdir(parents=True, exist_ok=True)
+    save_dir = Path(args.save_dir)
+    ckpt_dir = save_dir / "checkpoints"
+    img_dir = save_dir / "samples"
+    metrics_dir = save_dir / "metrics"
+    for d in (ckpt_dir, img_dir, metrics_dir):
+        d.mkdir(parents=True, exist_ok=True)
 
-    history = []
-    for epoch in range(args.epochs):
+    metrics_path = metrics_dir / f"{run_name}.json"
+    history: list[dict] = []
+    start_epoch = 0
+    best_test_bpd = float("inf")
+
+    resume_path = args.resume_from or (find_resume_checkpoint(args.save_dir) if args.auto_resume else None)
+    if resume_path:
+        resume_path = Path(resume_path)
+        print(f"resuming_from={resume_path}")
+        ckpt = load_training_checkpoint(
+            resume_path,
+            model=model,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            device=device,
+        )
+        history = ckpt.get("history", [])
+        start_epoch = int(ckpt.get("epoch", 0))
+        best_test_bpd = float(ckpt.get("best_test_bpd", best_test_bpd))
+        print(f"resume_epoch={start_epoch} best_test_bpd={best_test_bpd:.4f}")
+
+    extra = _checkpoint_extra(args, obs)
+
+    for epoch in range(start_epoch, args.epochs):
         model.train()
         train_bits_acc = 0.0
         train_items = 0
@@ -190,7 +247,10 @@ def train_pixelcnnpp(args: PixelCNNPPTrainArgs) -> str:
             "lr": float(optimizer.param_groups[0]["lr"]),
         }
         history.append(epoch_metrics)
-        print(f"epoch={epoch + 1} train_bpd={epoch_metrics['train_bpd']:.4f} test_bpd={epoch_metrics['test_bpd']:.4f}")
+        print(
+            f"epoch={epoch + 1} train_bpd={epoch_metrics['train_bpd']:.4f} "
+            f"test_bpd={epoch_metrics['test_bpd']:.4f}"
+        )
 
         if (epoch + 1) % max(1, min(10, args.epochs)) == 0 or (epoch + 1) == args.epochs:
             sample_t, latency_ms, throughput = sample_grid(
@@ -201,27 +261,66 @@ def train_pixelcnnpp(args: PixelCNNPPTrainArgs) -> str:
                 device=device,
             )
             sample_t = _rescale_inv(sample_t).clamp(0.0, 1.0)
-            utils.save_image(sample_t, str(img_dir / f"{run_name}_epoch{epoch + 1}.png"), nrow=5, padding=0)
+            utils.save_image(
+                sample_t,
+                str(img_dir / f"{run_name}_epoch{epoch + 1}.png"),
+                nrow=5,
+                padding=0,
+            )
             epoch_metrics["sample_latency_ms"] = latency_ms
             epoch_metrics["sample_throughput_img_s"] = throughput
 
+        write_metrics(history, metrics_path)
+
+        ckpt_payload_extra = {**extra, "best_test_bpd": best_test_bpd}
+        save_training_checkpoint(
+            ckpt_dir / "last.pt",
+            model=model,
+            epoch=epoch + 1,
+            history=history,
+            extra=ckpt_payload_extra,
+            optimizer=optimizer,
+            scheduler=scheduler,
+        )
+
+        if args.save_every_epochs > 0 and (epoch + 1) % args.save_every_epochs == 0:
+            save_training_checkpoint(
+                ckpt_dir / f"epoch_{epoch + 1:03d}.pt",
+                model=model,
+                epoch=epoch + 1,
+                history=history,
+                extra=ckpt_payload_extra,
+                optimizer=optimizer,
+                scheduler=scheduler,
+            )
+            print(f"saved_epoch_checkpoint=epoch_{epoch + 1:03d}.pt")
+
+        if epoch_metrics["test_bpd"] < best_test_bpd:
+            best_test_bpd = epoch_metrics["test_bpd"]
+            ckpt_payload_extra["best_test_bpd"] = best_test_bpd
+            save_training_checkpoint(
+                ckpt_dir / "best.pt",
+                model=model,
+                epoch=epoch + 1,
+                history=history,
+                extra=ckpt_payload_extra,
+                optimizer=optimizer,
+                scheduler=scheduler,
+            )
+            print(f"saved_best_checkpoint test_bpd={best_test_bpd:.4f}")
+
+    final_extra = {**extra, "best_test_bpd": best_test_bpd}
     ckpt_path = ckpt_dir / f"{run_name}.pt"
-    torch.save(
-        {
-            "model_state_dict": model.state_dict(),
-            "dataset": args.dataset,
-            "obs": obs,
-            "nr_resnet": args.nr_resnet,
-            "nr_filters": args.nr_filters,
-            "nr_logistic_mix": args.nr_logistic_mix,
-            "history": history,
-        },
+    save_training_checkpoint(
         ckpt_path,
+        model=model,
+        epoch=args.epochs,
+        history=history,
+        extra=final_extra,
+        optimizer=optimizer,
+        scheduler=scheduler,
     )
-
-    with (metrics_dir / f"{run_name}.json").open("w", encoding="utf-8") as f:
-        json.dump(history, f, indent=2)
-
+    print(f"saved_checkpoint={ckpt_path}")
     return str(ckpt_path)
 
 
@@ -238,7 +337,7 @@ def evaluate_pixelcnnpp_checkpoint(
         torch.cuda.manual_seed_all(seed)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    ckpt = torch.load(checkpoint_path, map_location=device)
+    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
     obs = tuple(ckpt["obs"])
     model = PixelCNNPP(
         nr_resnet=int(ckpt["nr_resnet"]),
@@ -261,6 +360,8 @@ def evaluate_pixelcnnpp_checkpoint(
         "sample_batch_size": sample_batch_size,
         "latency_ms_per_image": latency_ms,
         "throughput_img_per_s": throughput,
+        "best_test_bpd": ckpt.get("best_test_bpd"),
+        "epoch": ckpt.get("epoch"),
         "note": "FID should be computed in a separate script from generated samples.",
     }
     Path(out_json).parent.mkdir(parents=True, exist_ok=True)

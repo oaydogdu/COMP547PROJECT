@@ -19,8 +19,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--nr-logistic-mix", type=int, default=10)
     p.add_argument("--seed", type=int, default=1)
     p.add_argument("--sample-batch-size", type=int, default=25)
-    p.add_argument("--num-workers", type=int, default=0,
-                   help="DataLoader workers (use 0 on Colab to avoid CUDA errors)")
+    p.add_argument("--num-workers", type=int, default=0)
+    p.add_argument("--save-every-epochs", type=int, default=5)
+    p.add_argument("--resume-from", type=str, default=None)
+    p.add_argument("--fresh", action="store_true", help="Ignore existing checkpoints and train from scratch")
     return p.parse_args()
 
 
@@ -41,6 +43,9 @@ def main() -> None:
             seed=args.seed,
             sample_batch_size=args.sample_batch_size,
             num_workers=args.num_workers,
+            save_every_epochs=args.save_every_epochs,
+            resume_from=args.resume_from,
+            auto_resume=not args.fresh,
         )
     )
     print(f"saved_checkpoint={ckpt}")

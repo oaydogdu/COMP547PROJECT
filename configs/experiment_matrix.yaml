@@ -1,56 +1,36 @@
 project:
   name: comp547-arpg-tradeoff
-  seed: 547
+  seed: 42
   output_root: results
-
-compute:
-  default_device: cuda
-  preferred_gpu: t4
-  fallback_gpu: a100
-  mixed_precision: true
 
 datasets:
   fashion_mnist:
     image_size: 28
     channels: 1
-    num_classes: 10
-    split: train
   cifar10:
-    image_size: 32
-    channels: 3
-    num_classes: 10
-    split: train
-
-model:
-  vocab_size: 256
-  mask_token_id: 256
-  d_model: 384
-  n_heads: 6
-  n_layers: 8
-  dropout: 0.1
+    image_size: 16          # grayscale resize in arpg_runner
+    channels: 1
 
 baseline:
-  train_epochs: 30
-  batch_size: 128
-  learning_rate: 0.0003
-  weight_decay: 0.01
-  eval_every_steps: 500
+  model: PixelCNN++
+  train_epochs: 20
+  batch_size: 16
+  learning_rate: 0.0002
 
-parallel_decode:
-  schedules:
-    - random
-    - block-raster
-  block_sizes:
-    fashion_mnist: [4, 16]
-    cifar10: [4, 16, 64]
-  max_steps_multiplier: 2.0
+arpg:
+  model: Transformer
+  train_epochs: 20
+  batch_size: 16
+  learning_rate: 0.0003
+  d_model: 192
+  n_heads: 6
+  n_layers: 6
+
+fashion_mnist_sweep:
+  k_values: [1, 2, 4, 7, 14, 28, 56, 112, 196, 392, 784]
+  schedules: [random, raster, row]
 
 metrics:
-  quality:
-    - fid
-  efficiency:
-    - latency_ms
-    - throughput_img_s
-  repeats:
-    pilot: 1
-    critical: 3
+  quality: [fid, bpd]
+  efficiency: [latency_ms_per_image, throughput_img_per_s]
+  fid_samples: 2048

@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import torch
 from torchvision import datasets, transforms
 from torchvision.utils import save_image
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ARPG.arpg_runner import arpg_decode
 from ARPG.arpg_model import PixelARPG

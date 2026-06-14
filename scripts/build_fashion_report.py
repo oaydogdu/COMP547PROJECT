@@ -54,7 +54,7 @@ def build_report(
         ax.set_yscale("log")
         ax.grid(True, alpha=0.3)
         ax.legend(fontsize=9)
-        ax.set_xlabel("K (decode steps) — low K = fast, high K = quality")
+        ax.set_xlabel("K (number of decode steps; lower = faster)")
     axes[0].set_ylabel("Latency (ms / image)")
     axes[1].set_ylabel("Throughput (img / s)")
     plt.tight_layout()

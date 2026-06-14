@@ -1,42 +1,32 @@
 # Experiment Protocol
 
-## 1) Baseline Training
+See **[REPRODUCTION.md](REPRODUCTION.md)** for the up-to-date step-by-step workflow.
 
-Run on Fashion-MNIST first:
+## Metrics (fixed for all runs)
 
-`python scripts/train_baseline.py --dataset fashion_mnist --epochs 1 --out-checkpoint results/checkpoints/fashion_baseline.pt`
+| Metric | Definition |
+|--------|------------|
+| **Latency** | Wall-clock ms per generated image (CUDA sync in eval scripts) |
+| **Throughput** | Images per second |
+| **BPD** | Bits per dimension on test set |
+| **FID** | clean-fid vs. local Fashion-MNIST train reference (n=2048) |
 
-Then run CIFAR-10 baseline:
+## Fashion-MNIST matrix
 
-`python scripts/train_baseline.py --dataset cifar10 --epochs 1 --out-checkpoint results/checkpoints/cifar10_baseline.pt`
+- **Baseline:** PixelCNN++, 20 epochs
+- **ARPG:** Transformer, 20 epochs
+- **K sweep:** {1, 2, 4, 7, 14, 28, 56, 112, 196, 392, 784}
+- **Schedules:** random, raster, row
 
-Increase epochs for real runs after sanity checks pass.
+## Outputs per condition
 
-## 2) Correctness and Speed Check
+Save under `results/`:
 
-Run decode comparison on each checkpoint:
+- Config / checkpoint path
+- Timing JSON (`sweep.json` or eval JSON)
+- Sample grid PNG
+- FID JSON (selected K values)
 
-`python scripts/run_decode_eval.py --checkpoint results/checkpoints/fashion_baseline.pt --out-json results/eval/fashion_random_b16.json --schedule random --block-size 16`
+## CIFAR-10
 
-## 3) Minimum Matrix
-
-Fashion-MNIST:
-
-`python scripts/run_minimum_matrix.py --dataset fashion_mnist --checkpoint results/checkpoints/fashion_baseline.pt`
-
-CIFAR-10:
-
-`python scripts/run_minimum_matrix.py --dataset cifar10 --checkpoint results/checkpoints/cifar10_baseline.pt`
-
-## 4) Plot Tradeoff
-
-`python scripts/plot_tradeoff.py --summary-json results/minimum_matrix/cifar10/summary.json --out-png results/plots/cifar10_tradeoff.png`
-
-## 5) Reporting
-
-For each run save:
-- config snapshot
-- checkpoint path
-- timing JSON
-- sample grid image
-- optional FID score file
+Co-author runs use `--dataset cifar10` with 16×16 grayscale and extended training (40 epochs). Details in course report Section 4.3.

@@ -1,8 +1,15 @@
 .pycache/
 __pycache__/
 *.pyc
+*.pyo
 .DS_Store
-.cursor/plans/
+.cursor/
+
 results/
 data/
 external/
+report/
+
+*.pt
+*.pth
+*.ckpt
